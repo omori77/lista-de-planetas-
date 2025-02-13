@@ -1,1 +1,247 @@
+/// main.dart
+import 'package:flutter/material.dart';
+import 'views/home.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Gerenciador de Planetas',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: const HomeScreen(),
+    );
+  }
+}
+
+/// database/database_helper.dart
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._init();
+  static Database? _database;
+
+  DatabaseHelper._init();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDB('planetas.db');
+    return _database!;
+  }
+
+  Future<Database> _initDB(String filePath) async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, filePath);
+    return await openDatabase(path, version: 1, onCreate: _createDB);
+  }
+
+  Future _createDB(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE planetas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        distancia REAL NOT NULL,
+        tamanho REAL NOT NULL,
+        apelido TEXT
+      )
+    ''');
+  }
+}
+
+/// models/planeta.dart
+class Planeta {
+  int? id;
+  String nome;
+  double distancia;
+  double tamanho;
+  String? apelido;
+
+  Planeta({this.id, required this.nome, required this.distancia, required this.tamanho, this.apelido});
+
+  factory Planeta.fromMap(Map<String, dynamic> json) => Planeta(
+        id: json['id'],
+        nome: json['nome'],
+        distancia: json['distancia'],
+        tamanho: json['tamanho'],
+        apelido: json['apelido'],
+      );
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'nome': nome,
+      'distancia': distancia,
+      'tamanho': tamanho,
+      'apelido': apelido,
+    };
+  }
+}
+
+/// controllers/planeta_controller.dart
+import 'package:sqflite/sqflite.dart';
+import '../database/database_helper.dart';
+import '../models/planeta.dart';
+
+class PlanetaController {
+  Future<int> inserir(Planeta planeta) async {
+    final db = await DatabaseHelper.instance.database;
+    return await db.insert('planetas', planeta.toMap());
+  }
+
+  Future<List<Planeta>> listar() async {
+    final db = await DatabaseHelper.instance.database;
+    final result = await db.query('planetas');
+    return result.map((map) => Planeta.fromMap(map)).toList();
+  }
+
+  Future<int> atualizar(Planeta planeta) async {
+    final db = await DatabaseHelper.instance.database;
+    return await db.update(
+      'planetas',
+      planeta.toMap(),
+      where: 'id = ?',
+      whereArgs: [planeta.id],
+    );
+  }
+
+  Future<int> excluir(int id) async {
+    final db = await DatabaseHelper.instance.database;
+    return await db.delete(
+      'planetas',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+}
+
+/// views/home.dart
+import 'package:flutter/material.dart';
+import 'formulario.dart';
+import '../controllers/planeta_controller.dart';
+import '../models/planeta.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  _HomeScreenState createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final PlanetaController controller = PlanetaController();
+  List<Planeta> planetas = [];
+
+  @override
+  void initState() {
+    super.initState();
+    carregarPlanetas();
+  }
+
+  void carregarPlanetas() async {
+    final lista = await controller.listar();
+    setState(() {
+      planetas = lista;
+    });
+  }
+
+  void deletarPlaneta(int id) async {
+    await controller.excluir(id);
+    carregarPlanetas();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Planetas")),
+      body: ListView.builder(
+        itemCount: planetas.length,
+        itemBuilder: (context, index) {
+          final planeta = planetas[index];
+          return ListTile(
+            title: Text(planeta.nome),
+            subtitle: Text(planeta.apelido ?? ""),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () => deletarPlaneta(planeta.id!),
+            ),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => FormularioScreen(planeta: planeta),
+                ),
+              ).then((_) => carregarPlanetas());
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const FormularioScreen(),
+            ),
+          ).then((_) => carregarPlanetas());
+        },
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+/// views/formulario.dart
+import 'package:flutter/material.dart';
+import '../controllers/planeta_controller.dart';
+import '../models/planeta.dart';
+
+class FormularioScreen extends StatefulWidget {
+  final Planeta? planeta;
+  const FormularioScreen({super.key, this.planeta});
+
+  @override
+  _FormularioScreenState createState() => _FormularioScreenState();
+}
+
+class _FormularioScreenState extends State<FormularioScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final PlanetaController controller = PlanetaController();
+  String nome = "";
+  double distancia = 0;
+  double tamanho = 0;
+  String? apelido;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Cadastro de Planeta")),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                decoration: const InputDecoration(labelText: "Nome"),
+                onSaved: (value) => nome = value!,
+              ),
+              ElevatedButton(
+                onPressed: () {},
+                child: const Text("Salvar"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
